@@ -1,116 +1,139 @@
-import React, { useState, useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { supabase } from "./supabase";
-import { fmt, OVERRIDE_RATE, PERSONAL_RATE, MetricCard, Card, CardHeader, ProgressBar, pct, CASHFLOW_GOAL } from "./components";
 
-export default function UplineView() {
-  const [directors, setDirectors] = useState([]);
-  const [allLeads, setAllLeads] = useState([]);
-  const [allProd, setAllProd] = useState([]);
+export default function UplineView({ user, profile }) {
+  const [downline, setDownline] = useState([]);
+  const [production, setProduction] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => { fetchAll(); }, []);
+  useEffect(() => { fetchData(); }, [user]);
 
-  const fetchAll = async () => {
+  const fetchData = async () => {
     setLoading(true);
-    const [{ data: dirs }, { data: leads }, { data: prod }] = await Promise.all([
-      supabase.from("profiles").select("*").eq("role", "director"),
-      supabase.from("leads").select("*, agent:profiles!leads_user_id_fkey(full_name,role)"),
-      supabase.from("production").select("*, agent:profiles!production_agent_id_fkey(full_name)"),
-    ]);
-    setDirectors(dirs || []);
-    setAllLeads(leads || []);
-    setAllProd(prod || []);
+    const { data: agents } = await supabase.from("profiles").select("*").eq("upline_id", user.id);
+    const agentIds = (agents || []).map((a) => a.id);
+
+    let prod = [];
+    if (agentIds.length > 0) {
+      const { data } = await supabase.from("production").select("*, profiles(full_name)").in("agent_id", agentIds);
+      prod = data || [];
+    }
+
+    setDownline(agents || []);
+    setProduction(prod);
     setLoading(false);
   };
 
-  const totalAP = allLeads.filter(l => l.status === "closed").reduce((s, l) => s + (parseFloat(l.ap) || 0), 0);
-  const totalTeamAP = allProd.reduce((s, e) => s + (parseFloat(e.ap) || 0), 0);
-
-  if (loading) return <div style={{ padding: 40, color: "#bbb" }}>Loading org view...</div>;
+  const fmt = (n) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(n || 0);
+  const totalPremium = production.reduce((sum, r) => sum + (r.premium || 0), 0);
+  const override = profile?.override_level || 25;
+  const overrideEarnings = totalPremium * (override / 100);
 
   return (
-    <div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0,1fr))", gap: 12, marginBottom: 20 }}>
-        <MetricCard label="Total directors" value={directors.length} />
-        <MetricCard label="Org personal AP" value={fmt(totalAP)} accent="#1D9E75" />
-        <MetricCard label="Org team AP logged" value={fmt(totalTeamAP)} accent="#378ADD" />
-        <MetricCard label="Total org cases closed" value={allLeads.filter(l => l.status === "closed").length} accent="#7F77DD" />
+    <div className="page-content">
+      <div className="page-header">
+        <div>
+          <h2 className="page-title">Upline View</h2>
+          <p className="page-subtitle">Overview of your downline agents and their production</p>
+        </div>
+        <div className="badge badge-purple">Upline / Director</div>
       </div>
 
-      <Card>
-        <CardHeader title="Director breakdown" />
-        {directors.length === 0 ? (
-          <div style={{ textAlign: "center", padding: 32, color: "#bbb", fontSize: 14 }}>No directors in the system yet.</div>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            {directors.map(d => {
-              const dirLeads = allLeads.filter(l => l.user_id === d.id);
-              const dirClosedAP = dirLeads.filter(l => l.status === "closed").reduce((s, l) => s + (parseFloat(l.ap) || 0), 0);
-              const dirTeamAP = allProd.filter(e => e.director_id === d.id).reduce((s, e) => s + (parseFloat(e.ap) || 0), 0);
-              const totalEarned = dirClosedAP * PERSONAL_RATE + dirTeamAP * OVERRIDE_RATE;
-              return (
-                <div key={d.id} style={{ background: "#f8f7f4", borderRadius: 12, padding: "16px 18px" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
-                    <div>
-                      <div style={{ fontSize: 14, fontWeight: 700, color: "#1a1a1a" }}>{d.full_name || d.email}</div>
-                      <div style={{ fontSize: 12, color: "#aaa", marginTop: 2 }}>{d.email}</div>
-                    </div>
-                    <div style={{ textAlign: "right" }}>
-                      <div style={{ fontSize: 16, fontWeight: 700, color: "#1D9E75" }}>{fmt(totalEarned)}</div>
-                      <div style={{ fontSize: 11, color: "#aaa" }}>total cashflow</div>
-                    </div>
-                  </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0,1fr))", gap: 10, marginBottom: 12 }}>
-                    <div style={{ background: "#fff", borderRadius: 8, padding: "10px 12px" }}>
-                      <div style={{ fontSize: 11, color: "#aaa" }}>Personal AP</div>
-                      <div style={{ fontSize: 15, fontWeight: 700 }}>{fmt(dirClosedAP)}</div>
-                    </div>
-                    <div style={{ background: "#fff", borderRadius: 8, padding: "10px 12px" }}>
-                      <div style={{ fontSize: 11, color: "#aaa" }}>Team AP</div>
-                      <div style={{ fontSize: 15, fontWeight: 700 }}>{fmt(dirTeamAP)}</div>
-                    </div>
-                    <div style={{ background: "#fff", borderRadius: 8, padding: "10px 12px" }}>
-                      <div style={{ fontSize: 11, color: "#aaa" }}>Leads</div>
-                      <div style={{ fontSize: 15, fontWeight: 700 }}>{dirLeads.length}</div>
-                    </div>
-                  </div>
-                  <ProgressBar value={totalEarned} max={CASHFLOW_GOAL} color="#1D9E75" height={6} />
-                  <div style={{ fontSize: 11, color: "#aaa", marginTop: 4 }}>{pct(totalEarned, CASHFLOW_GOAL)}% of $50k acquisition goal</div>
-                </div>
-              );
-            })}
+      {loading ? (
+        <div className="loading-state"><div className="spinner"></div><p>Loading downline data...</p></div>
+      ) : (
+        <>
+          <div className="stats-grid">
+            <div className="stat-card stat-card-blue">
+              <div className="stat-info">
+                <div className="stat-value">{downline.length}</div>
+                <div className="stat-label">Direct Downline</div>
+                <div className="stat-sub">agents in your team</div>
+              </div>
+            </div>
+            <div className="stat-card stat-card-green">
+              <div className="stat-info">
+                <div className="stat-value">{fmt(totalPremium)}</div>
+                <div className="stat-label">Team Production</div>
+                <div className="stat-sub">total written premium</div>
+              </div>
+            </div>
+            <div className="stat-card stat-card-purple">
+              <div className="stat-info">
+                <div className="stat-value">{fmt(overrideEarnings)}</div>
+                <div className="stat-label">Override Earnings</div>
+                <div className="stat-sub">{override}% override rate</div>
+              </div>
+            </div>
           </div>
-        )}
-      </Card>
 
-      <Card>
-        <CardHeader title="All recent closed cases" />
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead>
-              <tr>
-                {["Agent", "Client", "Product", "AP", "Source"].map(h => (
-                  <th key={h} style={{ textAlign: "left", fontSize: 10, fontWeight: 700, color: "#aaa", padding: "0 10px 10px", textTransform: "uppercase", letterSpacing: "0.07em" }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {allLeads.filter(l => l.status === "closed").slice(0, 20).map(l => (
-                <tr key={l.id}>
-                  <td style={{ padding: "8px 10px", borderTop: "1px solid #f0ede6", fontSize: 12, color: "#888" }}>{l.agent?.full_name || "—"}</td>
-                  <td style={{ padding: "8px 10px", borderTop: "1px solid #f0ede6", fontSize: 13, fontWeight: 600 }}>{l.name || "—"}</td>
-                  <td style={{ padding: "8px 10px", borderTop: "1px solid #f0ede6", fontSize: 13 }}>{l.product}</td>
-                  <td style={{ padding: "8px 10px", borderTop: "1px solid #f0ede6", fontSize: 13, fontWeight: 700, color: "#1D9E75" }}>{fmt(l.ap)}</td>
-                  <td style={{ padding: "8px 10px", borderTop: "1px solid #f0ede6", fontSize: 12, color: "#888" }}>{l.source}</td>
-                </tr>
-              ))}
-              {allLeads.filter(l => l.status === "closed").length === 0 && (
-                <tr><td colSpan={5} style={{ padding: 24, textAlign: "center", fontSize: 13, color: "#bbb" }}>No closed cases yet across the org.</td></tr>
+          <div className="card">
+            <div className="card-header">
+              <h3 className="card-title">Downline Agents</h3>
+              <span className="badge">{downline.length}</span>
+            </div>
+            <div className="card-body">
+              {downline.length === 0 ? (
+                <div className="empty-state"><p>No downline agents yet. Invite agents to join your team!</p></div>
+              ) : (
+                <div className="table-wrap">
+                  <table className="data-table">
+                    <thead>
+                      <tr><th>Name</th><th>Email</th><th>Role</th><th>Contract</th><th>Production</th></tr>
+                    </thead>
+                    <tbody>
+                      {downline.map((agent) => {
+                        const agentProd = production.filter((p) => p.agent_id === agent.id);
+                        const agentTotal = agentProd.reduce((sum, p) => sum + (p.premium || 0), 0);
+                        return (
+                          <tr key={agent.id}>
+                            <td className="contact-name">{agent.full_name}</td>
+                            <td>{agent.email}</td>
+                            <td><span className={`badge badge-${agent.role === "director" ? "green" : "blue"}`}>{agent.role}</span></td>
+                            <td>{agent.contract_level ? agent.contract_level + "%" : "-"}</td>
+                            <td className="mono">{fmt(agentTotal)}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
               )}
-            </tbody>
-          </table>
-        </div>
-      </Card>
+            </div>
+          </div>
+
+          <div className="card" style={{ marginTop: "1.5rem" }}>
+            <div className="card-header">
+              <h3 className="card-title">Team Production Records</h3>
+              <span className="badge">{production.length}</span>
+            </div>
+            <div className="card-body">
+              {production.length === 0 ? (
+                <div className="empty-state"><p>No production records from your downline yet.</p></div>
+              ) : (
+                <div className="table-wrap">
+                  <table className="data-table">
+                    <thead>
+                      <tr><th>Agent</th><th>Client</th><th>Product</th><th>Premium</th><th>Status</th></tr>
+                    </thead>
+                    <tbody>
+                      {production.map((p) => (
+                        <tr key={p.id}>
+                          <td>{p.profiles?.full_name || "-"}</td>
+                          <td>{p.client_name}</td>
+                          <td><span className="badge badge-blue">{p.product_type}</span></td>
+                          <td className="mono">{fmt(p.premium)}</td>
+                          <td><span className={`badge badge-${p.status === "Issued" ? "green" : p.status === "Declined" ? "red" : "orange"}`}>{p.status}</span></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
